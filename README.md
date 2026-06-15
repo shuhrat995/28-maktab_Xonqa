@@ -35,3 +35,6 @@ src/
 ├── hooks/          # Maxsus custom hooklar (kod takrorlanishini oldini olish uchun)
 ├── services/       # API va ma'lumotlar bilan ishlash mantiqi
 └── utils/          # Yordamchi funksiyalar va mantiqiy hisob-kitoblar
+
+
+hammasi biz reja qilgandek bo'lmadi
