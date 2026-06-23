@@ -94,12 +94,12 @@ curl https://your-backend.up.railway.app/api/health
 Create your frontend production env from `.env.production.example`:
 
 ```env
-VITE_API_ORIGIN=https://your-backend.up.railway.app
+BACKEND_ORIGIN=https://your-backend.up.railway.app
 VITE_APP_NAME=State School
-VITE_APP_URL=https://your-school.pages.dev
+VITE_APP_URL=https://28-maktab-xonqa.vercel.app
 ```
 
-If you still use `VITE_API_URL`, it also works, but `VITE_API_ORIGIN` is the primary variable used by the app.
+The Vercel deployment proxies `/api/*` to `BACKEND_ORIGIN`, so the browser never calls `localhost:3001` in production. If you still use `VITE_API_URL` or `VITE_API_ORIGIN`, the proxy can also read them as a fallback.
 
 ## 7. Cloudflare Pages
 

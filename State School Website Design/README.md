@@ -79,6 +79,7 @@ A premium, fully functional school website built with React, TypeScript, and Exp
    - Frontend: http://localhost:5173
    - Backend API: http://localhost:3001
    - Admin Panel: http://localhost:5173/admin
+   - Hidden admin aliases: `/maktab28-boshqaruv`, `/xonqa-28-panel`
 
 ### Admin Credentials
 - Admin credentials are loaded from `backend/.env`
@@ -147,6 +148,7 @@ A premium, fully functional school website built with React, TypeScript, and Exp
 
 - Railway backend deploy guide: [backend/RAILWAY_DEPLOY.md](backend/RAILWAY_DEPLOY.md)
 - Frontend production env example: [.env.production.example](.env.production.example)
+- On Vercel, set `BACKEND_ORIGIN` to the deployed backend origin. The frontend uses same-origin `/api/*`, and the Vercel API proxy forwards those requests to the backend.
 
 ### Scripts
 

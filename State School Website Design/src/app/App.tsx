@@ -1,4 +1,5 @@
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+import type { ReactNode } from 'react';
 import { TranslationProvider } from '@/translations';
 import { Layout } from '@/app/components/Layout';
 import { Home } from '@/app/pages/Home';
@@ -10,8 +11,9 @@ import { Gallery } from '@/app/pages/Gallery';
 import { Contact } from '@/app/pages/Contact';
 import { Admin } from '@/app/pages/Admin';
 
-// Wrapper компонент для Layout'а
-function RootLayout({ children }: { children: React.ReactNode }) {
+const ADMIN_PATHS = ['/admin', '/maktab28-boshqaruv', '/xonqa-28-panel'];
+
+function RootLayout({ children }: { children: ReactNode }) {
   return (
     <Layout>
       {children}
@@ -48,10 +50,10 @@ const router = createBrowserRouter([
     path: '/contact',
     element: <RootLayout><Contact /></RootLayout>,
   },
-  {
-    path: '/admin',
+  ...ADMIN_PATHS.map(path => ({
+    path,
     element: <RootLayout><Admin /></RootLayout>,
-  },
+  })),
 ], {
   basename: '/'
 });

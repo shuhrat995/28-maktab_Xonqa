@@ -4,7 +4,43 @@
   "env": {},
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/about",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/teachers",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/students",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/news",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/gallery",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/contact",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/admin",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/maktab28-boshqaruv",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/xonqa-28-panel",
       "destination": "/index.html"
     }
   ]
