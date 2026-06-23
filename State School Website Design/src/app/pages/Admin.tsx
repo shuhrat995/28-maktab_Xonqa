@@ -9,6 +9,7 @@ import {
   GalleryHorizontalEnd,
   GraduationCap,
   Home,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Moon,
@@ -28,7 +29,7 @@ import { API_BASE_URL } from '@/app/config';
 
 const API_URL = API_BASE_URL;
 
-type AdminTab = 'dashboard' | 'home' | 'about' | 'staff' | 'teachers' | 'students' | 'news' | 'gallery' | 'contact' | 'footer' | 'logs';
+type AdminTab = 'dashboard' | 'home' | 'about' | 'staff' | 'teachers' | 'students' | 'news' | 'gallery' | 'contact' | 'footer' | 'logs' | 'security';
 
 type ContentItem = {
   id: number;
@@ -145,6 +146,8 @@ export function Admin() {
   const [studentForm, setStudentForm] = useState<any>({ name: '', grade: '', class_name: '', group: '', parent_name: '', parent_phone: '', achievements: '', certificates: '' });
   const [staffForm, setStaffForm] = useState<any>({ name: '', position: '', description: '', order_num: 1, is_active: true });
   const [contentForm, setContentForm] = useState<any>(emptyContent);
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '' });
+  const [secretKey, setSecretKey] = useState('');
   const [editing, setEditing] = useState<{ type: string; id: number } | null>(null);
 
   const isAuthenticated = Boolean(token);
@@ -317,6 +320,26 @@ export function Admin() {
     loadAll();
   }
 
+  async function changePassword(e: FormEvent) {
+    e.preventDefault();
+    await api('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify(passwordForm)
+    });
+    setPasswordForm({ currentPassword: '', newPassword: '' });
+    toast.success('Password changed');
+  }
+
+  async function updateSecretKey(e: FormEvent) {
+    e.preventDefault();
+    await api('/auth/set-secret-key', {
+      method: 'POST',
+      body: JSON.stringify({ secretKey })
+    });
+    setSecretKey('');
+    toast.success('Secret key updated');
+  }
+
   async function logout() {
     try {
       await fetch(`${API_URL}/auth/logout`, {
@@ -410,6 +433,16 @@ export function Admin() {
             {(activeTab === 'news' || activeTab === 'gallery') && (
               <CrudLayout title={activeTab === 'news' ? 'News' : 'Gallery'} onSubmit={saveContent} form={<ContentForm form={contentForm} setForm={setContentForm} gallery={activeTab === 'gallery'} />} list={<ContentList items={visibleContent} edit={(item) => { setEditing({ type: 'content', id: item.id }); setContentForm({ ...emptyContent, ...item }); }} remove={(id) => deleteItem(`/content/${id}`)} publish={publishItem} />} />
             )}
+            {activeTab === 'security' && (
+              <SecurityPanel
+                passwordForm={passwordForm}
+                setPasswordForm={setPasswordForm}
+                secretKey={secretKey}
+                setSecretKey={setSecretKey}
+                onChangePassword={changePassword}
+                onUpdateSecretKey={updateSecretKey}
+              />
+            )}
             {activeTab === 'logs' && <Logs logs={logs} notifications={notifications} />}
           </main>
         </div>
@@ -443,7 +476,7 @@ function Dashboard({ stats, notifications }: { stats: Record<string, number>; no
       <div className="admin-card">
         <h3 className="font-bold mb-3">Real-time Notifications</h3>
         <div className="space-y-2">
-          {notifications.slice(0, 6).map(item => <p key={item.id} className="rounded-md bg-slate-100 p-3 text-sm dark:bg-slate-800">{item.message}</p>)}
+          {notifications.slice(0, 6).map(item => <p key={item.id} className={notificationClass(item)}>{item.message}</p>)}
           {!notifications.length && <p className="text-sm text-slate-500">No notifications yet.</p>}
         </div>
       </div>
@@ -659,7 +692,66 @@ function Logs({ logs, notifications }: any) {
 }
 
 function DataFeed({ items }: any) {
-  return <div className="space-y-2">{items.map((item: any) => <div key={item.id} className="rounded-md bg-slate-100 p-3 text-sm dark:bg-slate-800"><p>{item.message}</p><p className="text-xs text-slate-500">{new Date(item.created_at).toLocaleString()}</p></div>)}</div>;
+  return <div className="space-y-2">{items.map((item: any) => <div key={item.id} className={notificationClass(item)}><p>{item.message}</p><p className="text-xs opacity-70">{new Date(item.created_at).toLocaleString()}</p></div>)}</div>;
+}
+
+function notificationClass(item: any) {
+  return item?.type === 'danger'
+    ? 'rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200'
+    : 'rounded-md bg-slate-100 p-3 text-sm dark:bg-slate-800';
+}
+
+function getPasswordChecks(password: string) {
+  return [
+    ['At least 8 characters', password.length >= 8],
+    ['Uppercase letter', /[A-Z]/.test(password)],
+    ['Lowercase letter', /[a-z]/.test(password)],
+    ['Number', /[0-9]/.test(password)],
+    ['Special character', /[!@#$%^&*(),.?":{}|<>]/.test(password)]
+  ] as const;
+}
+
+function SecurityPanel({ passwordForm, setPasswordForm, secretKey, setSecretKey, onChangePassword, onUpdateSecretKey }: any) {
+  const checks = getPasswordChecks(passwordForm.newPassword || '');
+  const strongCount = checks.filter(([, passed]) => passed).length;
+
+  return (
+    <div className="grid gap-6 xl:grid-cols-2">
+      <form onSubmit={onChangePassword} className="admin-card space-y-4">
+        <h3 className="font-bold flex items-center gap-2"><KeyRound className="size-4" /> Password Security</h3>
+        <label className="block text-sm">
+          <span className="mb-1 block text-slate-500">Current password</span>
+          <input className="admin-input" type="password" value={passwordForm.currentPassword} onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })} />
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1 block text-slate-500">New password</span>
+          <input className="admin-input" type="password" value={passwordForm.newPassword} onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })} />
+        </label>
+        <div className="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-700">
+          <div className="mb-2 flex items-center justify-between">
+            <span>Password strength</span>
+            <span className={strongCount === checks.length ? 'text-green-600' : 'text-amber-600'}>{strongCount}/{checks.length}</span>
+          </div>
+          <div className="grid gap-1">
+            {checks.map(([label, passed]) => (
+              <span key={label} className={passed ? 'text-green-600' : 'text-slate-500'}>{passed ? 'OK' : 'NO'} - {label}</span>
+            ))}
+          </div>
+        </div>
+        <Button className="bg-cyan-700 hover:bg-cyan-800"><Save className="mr-2 size-4" />Change Password</Button>
+      </form>
+
+      <form onSubmit={onUpdateSecretKey} className="admin-card h-fit space-y-4">
+        <h3 className="font-bold flex items-center gap-2"><Shield className="size-4" /> Secret Key</h3>
+        <p className="text-sm text-slate-500">Used for secure password recovery. Minimum 16 characters.</p>
+        <label className="block text-sm">
+          <span className="mb-1 block text-slate-500">New secret key</span>
+          <input className="admin-input" type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} />
+        </label>
+        <Button className="bg-cyan-700 hover:bg-cyan-800"><Save className="mr-2 size-4" />Update Secret Key</Button>
+      </form>
+    </div>
+  );
 }
 
 function toFormData(source: Record<string, any>, fileKeys: string[]) {
@@ -684,5 +776,6 @@ const navItems: Array<{ id: AdminTab; label: string; icon: any }> = [
   { id: 'gallery', label: 'Gallery', icon: GalleryHorizontalEnd },
   { id: 'contact', label: 'Contact', icon: Contact },
   { id: 'footer', label: 'Footer', icon: BookOpen },
+  { id: 'security', label: 'Security', icon: KeyRound },
   { id: 'logs', label: 'Logs', icon: Bell }
 ];

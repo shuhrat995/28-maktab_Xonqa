@@ -138,24 +138,6 @@ app.use('/uploads', (req, res, next) => {
   }
 }));
 
-// Serve admin panel
-const ADMIN_DIR = path.join(__dirname, '../admin');
-console.log('🖥️  Admin directory:', ADMIN_DIR);
-console.log('🖥️  Admin directory exists:', fs.existsSync(ADMIN_DIR));
-
-// Serve admin panel files
-app.use('/admin', express.static(ADMIN_DIR));
-
-// Fallback for admin routes - serve index.html for any admin sub-routes
-app.get('/admin*', (req, res) => {
-  const indexPath = path.join(ADMIN_DIR, 'index.html');
-  if (fs.existsSync(indexPath)) {
-    res.sendFile(indexPath);
-  } else {
-    res.status(404).json({ error: 'Admin panel not found' });
-  }
-});
-
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/content', contentRoutes);

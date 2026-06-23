@@ -170,7 +170,7 @@ interface NotificationItem {
   id: number;
   title: string;
   message: string;
-  type: 'info' | 'success' | 'warning';
+  type: 'info' | 'success' | 'warning' | 'danger';
   read: boolean;
   created_at: string;
 }

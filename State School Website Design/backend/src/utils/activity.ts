@@ -14,7 +14,7 @@ export function logActivity(adminId: number | null, action: string, entity: stri
   db.activity_logs = db.activity_logs.slice(0, 250);
 }
 
-export function pushNotification(title: string, message: string, type: 'info' | 'success' | 'warning' = 'info') {
+export function pushNotification(title: string, message: string, type: 'info' | 'success' | 'warning' | 'danger' = 'info') {
   if (!db.notifications) db.notifications = [];
   db.notifications.unshift({
     id: getNextId('notifications'),
