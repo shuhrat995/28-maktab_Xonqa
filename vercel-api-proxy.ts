@@ -54,20 +54,38 @@ const admins: AdminAccount[] = [
   }
 ];
 
-const attempts = new Map<string, AttemptState>();
-const notifications: any[] = [];
-const logs: any[] = [];
+const runtime = ((globalThis as any).__maktab28Runtime ||= {
+  attempts: new Map<string, AttemptState>(),
+  notifications: [] as any[],
+  logs: [] as any[],
+  state: {
+    content: [] as any[],
+    teachers: [] as any[],
+    students: [] as any[],
+    staff: [] as any[],
+    sections: {} as Record<string, any>,
+    settings: [] as any[]
+  },
+  nextId: 1
+});
 
-const state = {
-  content: [] as any[],
-  teachers: [] as any[],
-  students: [] as any[],
-  staff: [] as any[],
-  sections: {} as Record<string, any>,
-  settings: [] as any[]
+const attempts = runtime.attempts as Map<string, AttemptState>;
+const notifications = runtime.notifications as any[];
+const logs = runtime.logs as any[];
+const state = runtime.state as {
+  content: any[];
+  teachers: any[];
+  students: any[];
+  staff: any[];
+  sections: Record<string, any>;
+  settings: any[];
 };
 
-let nextId = 1;
+function allocateId() {
+  const id = runtime.nextId;
+  runtime.nextId += 1;
+  return id;
+}
 
 function normalizeOrigin(origin: string) {
   return origin.replace(/\/+$/, '');
@@ -174,7 +192,7 @@ function resetLoginAttempts(req: any, username: string) {
 
 function addLog(message: string, action = 'system') {
   logs.unshift({
-    id: nextId++,
+    id: allocateId(),
     admin_id: null,
     action,
     entity: 'admin',
@@ -187,7 +205,7 @@ function addLog(message: string, action = 'system') {
 
 function addDangerNotice(message: string) {
   notifications.unshift({
-    id: nextId++,
+    id: allocateId(),
     title: 'Xavfli admin login urinishi',
     message,
     type: 'danger',
@@ -272,9 +290,9 @@ async function parseBody(req: any) {
   const raw = await readRequestBody(req);
   if (!raw?.length) return {};
 
-  const text = raw.toString('utf8');
   const contentType = String(req.headers?.['content-type'] || '');
   if (contentType.includes('application/json')) {
+    const text = raw.toString('utf8');
     try {
       return JSON.parse(text);
     } catch {
@@ -282,7 +300,70 @@ async function parseBody(req: any) {
     }
   }
 
+  if (contentType.includes('application/x-www-form-urlencoded')) {
+    return Object.fromEntries(new URLSearchParams(raw.toString('utf8')).entries());
+  }
+
+  if (contentType.includes('multipart/form-data')) {
+    return parseMultipartBody(raw, contentType);
+  }
+
   return {};
+}
+
+function parseMultipartBody(raw: any, contentType: string) {
+  const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+  const boundary = boundaryMatch?.[1] || boundaryMatch?.[2];
+  if (!boundary) return {};
+
+  const result: Record<string, any> = {};
+  const body = raw.toString('latin1');
+  const parts = body.split(`--${boundary}`);
+
+  for (const part of parts) {
+    if (!part || part === '--\r\n' || part === '--') continue;
+    const trimmed = part.replace(/^\r\n/, '').replace(/\r\n--$/, '').replace(/\r\n$/, '');
+    const headerEnd = trimmed.indexOf('\r\n\r\n');
+    if (headerEnd < 0) continue;
+
+    const rawHeaders = trimmed.slice(0, headerEnd);
+    const value = trimmed.slice(headerEnd + 4);
+    const name = rawHeaders.match(/name="([^"]+)"/)?.[1];
+    if (!name) continue;
+
+    const filename = rawHeaders.match(/filename="([^"]*)"/)?.[1];
+    if (filename) {
+      if (!value.length) continue;
+      const contentTypeHeader = rawHeaders.match(/content-type:\s*([^\r\n]+)/i)?.[1] || 'application/octet-stream';
+      const bytes = Buffer.from(value, 'latin1');
+      result[name] = {
+        filename,
+        contentType: contentTypeHeader,
+        size: bytes.length,
+        dataUrl: `data:${contentTypeHeader};base64,${bytes.toString('base64')}`
+      };
+      continue;
+    }
+
+    result[name] = coerceFormValue(value);
+  }
+
+  return result;
+}
+
+function coerceFormValue(value: string) {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  if (/^-?\d+(\.\d+)?$/.test(value)) return Number(value);
+  const trimmed = value.trim();
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+  return value;
 }
 
 function sendUnauthorized(res: any) {
@@ -296,6 +377,56 @@ function collectionByName(name: string) {
   if (name === 'content') return state.content;
   if (name === 'settings') return state.settings;
   return null;
+}
+
+function prepareItemBody(name: string, body: Record<string, any>) {
+  const next = { ...body };
+
+  if (next.image?.dataUrl) {
+    next.image_url = next.image.dataUrl;
+    delete next.image;
+  }
+
+  if (name === 'students') {
+    next.achievements = normalizeList(next.achievements);
+    next.certificates = normalizeList(next.certificates);
+    next.attendance ||= [];
+  }
+
+  if (name === 'teachers' && typeof next.social_links === 'string') {
+    try {
+      next.social_links = JSON.parse(next.social_links);
+    } catch {
+      next.social_links = {};
+    }
+  }
+
+  if (name === 'content') {
+    next.views = Number(next.views || 0);
+  }
+
+  return next;
+}
+
+function normalizeList(value: any) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return [];
+  return value.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function filterCollection(items: any[], searchParams: URLSearchParams) {
+  let next = [...items];
+  const category = searchParams.get('category');
+  const active = searchParams.get('active');
+  const published = searchParams.get('published');
+  const limit = Number(searchParams.get('limit') || 0);
+
+  if (category) next = next.filter((item) => item.category === category);
+  if (active === 'true') next = next.filter((item) => item.is_active !== false);
+  if (published === 'true') next = next.filter((item) => item.is_published !== false);
+  if (Number.isFinite(limit) && limit > 0) next = next.slice(0, limit);
+
+  return next;
 }
 
 async function handleAuth(req: any, res: any, path: string) {
@@ -427,10 +558,10 @@ async function handleLocalApi(req: any, res: any) {
   for (const name of ['teachers', 'students', 'staff', 'content', 'settings']) {
     if (path === `/api/${name}`) {
       const collection = collectionByName(name)!;
-      if (method === 'GET') return res.status(200).json({ [name]: collection });
+      if (method === 'GET') return res.status(200).json({ [name]: filterCollection(collection, url.searchParams) });
       if (method === 'POST') {
-        const body = await parseBody(req);
-        const item = { id: nextId++, ...body, is_active: body.is_active ?? true, is_published: body.is_published ?? true, created_at: nowIso() };
+        const body = prepareItemBody(name, await parseBody(req));
+        const item = { id: allocateId(), ...body, is_active: body.is_active ?? true, is_published: body.is_published ?? true, created_at: nowIso() };
         collection.unshift(item);
         addLog(`${name} yaratildi`, 'create');
         return res.status(201).json({ message: 'Created', [singularName(name)]: item });
@@ -439,11 +570,22 @@ async function handleLocalApi(req: any, res: any) {
 
     if (path.startsWith(`/api/${name}/`)) {
       const collection = collectionByName(name)!;
-      const id = Number(path.split('/')[3]);
+      const pathParts = path.split('/');
+      const id = Number(pathParts[3]);
+      const action = pathParts[4];
       const index = collection.findIndex((item) => Number(item.id) === id);
 
       if (method === 'PUT' || method === 'PATCH') {
-        if (index >= 0) collection[index] = { ...collection[index], ...(await parseBody(req)), updated_at: nowIso() };
+        const rawBody = await parseBody(req);
+        const body = action === 'attendance' ? rawBody : prepareItemBody(name, rawBody);
+        if (index >= 0 && name === 'content' && action === 'publish') {
+          collection[index] = { ...collection[index], is_published: true, updated_at: nowIso() };
+        } else if (index >= 0 && name === 'students' && action === 'attendance') {
+          const attendance = Array.isArray(collection[index].attendance) ? collection[index].attendance : [];
+          collection[index] = { ...collection[index], attendance: [body, ...attendance], updated_at: nowIso() };
+        } else if (index >= 0) {
+          collection[index] = { ...collection[index], ...body, updated_at: nowIso() };
+        }
         addLog(`${name} yangilandi`, 'update');
         return res.status(200).json({ message: 'Updated', [singularName(name)]: index >= 0 ? collection[index] : null });
       }
